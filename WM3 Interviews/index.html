@@ -267,6 +267,16 @@
           <!-- INTERVIEW -->
           <div class="section-title">Interview</div>
 
+          <!-- NEW: Interview Type -->
+          <div class="field">
+            <label for="moduleType">Interview Type</label>
+            <select id="moduleType" name="moduleType" required>
+              <option value="">-- select --</option>
+              <option value="FamilyNeighbors">Family &amp; Neighbors</option>
+              <option value="CrimeStoppers">Crime Stoppers Tipline</option>
+            </select>
+          </div>
+
           <div class="field-row">
             <div class="field">
               <label for="subjectName">Subject Name</label>
@@ -338,7 +348,10 @@
 
     const form = document.getElementById("interviewForm");
     const statusEl = document.getElementById("status");
-    const STORAGE_KEY = "wm3_interviewForm_draft_v1";
+
+    // bumped key so older drafts don’t collide with new moduleType requirement
+    const STORAGE_KEY = "wm3_interviewForm_draft_v2";
+
     const DRAFT_FIELDS_SELECTOR = "input, select, textarea";
     let saveTimer = null;
     let isSubmitting = false;
@@ -367,7 +380,7 @@
     }
 
     function saveDraft(showMessage = false) {
-      if (isSubmitting) return; // avoid re-saving during the submit/clear cycle
+      if (isSubmitting) return;
       try {
         const payload = {
           updatedAt: new Date().toISOString(),
@@ -412,21 +425,15 @@
     }
 
     function clearDraft() {
-      try {
-        localStorage.removeItem(STORAGE_KEY);
-      } catch (err) {
-        console.warn("Local draft clear failed", err);
-      }
+      try { localStorage.removeItem(STORAGE_KEY); }
+      catch (err) { console.warn("Local draft clear failed", err); }
     }
 
     function resetFormForNextStudent() {
       form.reset();
-
-      // Clear all textareas explicitly (just to be extra sure on some browsers)
       form.querySelectorAll("textarea").forEach(t => t.value = "");
       form.querySelectorAll('input[type="text"], input[type="email"]').forEach(i => i.value = "");
 
-      // Refill Date/Time with current local time (nice for next student)
       const dt = document.getElementById("logDateTime");
       if (dt) {
         const now = new Date();
@@ -436,8 +443,26 @@
       }
     }
 
-    // Restore any existing local draft first
+    // NEW: auto-set moduleType from URL (?module=FamilyNeighbors or ?module=CrimeStoppers)
+    function applyModuleFromURL() {
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const m = params.get("module");
+        if (!m) return;
+        const sel = document.getElementById("moduleType");
+        if (!sel) return;
+        if (m === "FamilyNeighbors" || m === "CrimeStoppers") {
+          sel.value = m;
+          saveDraft(false);
+        }
+      } catch (err) {
+        console.warn("Could not apply module from URL", err);
+      }
+    }
+
+    // Restore local draft, then apply URL module override
     restoreDraft();
+    applyModuleFromURL();
 
     // N/A buttons
     document.querySelectorAll("[data-na-target]").forEach(btn => {
@@ -467,43 +492,30 @@
     form.querySelectorAll(DRAFT_FIELDS_SELECTOR).forEach(el => {
       const eventName = (el.tagName === "SELECT") ? "change" : "input";
       el.addEventListener(eventName, scheduleDraftSave);
-      if (eventName !== "change") {
-        el.addEventListener("change", scheduleDraftSave);
-      }
+      if (eventName !== "change") el.addEventListener("change", scheduleDraftSave);
     });
 
-    // Save draft when tab loses focus / page hides
     window.addEventListener("beforeunload", () => saveDraft(false));
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "hidden") saveDraft(false);
     });
 
-    // Submit to Google Apps Script, then clear form + local draft
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
-
       if (isSubmitting) return;
       isSubmitting = true;
 
-      // Final local capture before send (optional, but helpful if network fails)
       try { saveDraft(false); } catch (_) {}
 
       statusEl.textContent = "Saving…";
-
       const fd = new FormData(form);
 
-      // Optional: disable buttons during submit
       const buttons = form.querySelectorAll("button");
       buttons.forEach(b => b.disabled = true);
 
       try {
-        await fetch(SCRIPT_URL, {
-          method: "POST",
-          mode: "no-cors",
-          body: fd
-        });
+        await fetch(SCRIPT_URL, { method: "POST", mode: "no-cors", body: fd });
 
-        // Success path (no-cors means we assume sent if no exception)
         clearDraft();
         resetFormForNextStudent();
         setStatus("Saved. Form cleared for next entry.", 3000);
